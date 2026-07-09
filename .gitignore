@@ -1,0 +1,11 @@
+venv/
+.env
+__pycache__/
+*.pyc
+drafts/
+contacts.db
+outreach.log
+contacts_reference.csv
+.DS_Store
+*.xlsx
+custom_note.csv
