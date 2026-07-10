@@ -1,0 +1,13 @@
+# Normalize line endings on checkin, keep native line endings on checkout.
+* text=auto eol=lf
+
+*.py text
+*.sh text eol=lf
+*.md text
+*.csv text
+*.txt text
+
+# Binary / generated formats -- never diff or line-ending-normalize these.
+*.xlsx binary
+*.docx binary
+*.db binary
