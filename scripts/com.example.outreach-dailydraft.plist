@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template macOS LaunchAgent for the daily auto-draft job. This file is NOT
+  active on its own -- copy it, edit the placeholders below, then load the
+  copy. See the "Daily auto-draft" section in README.md for full steps.
+
+  Placeholders to replace:
+    yourname               -> anything unique to you, e.g. your username
+    /path/to/internship-outreach -> the absolute path to your clone of this repo
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.yourname.outreach-dailydraft</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/path/to/internship-outreach/scripts/daily_draft.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>11</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/internship-outreach/scripts/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/internship-outreach/scripts/launchd.err.log</string>
+</dict>
+</plist>
