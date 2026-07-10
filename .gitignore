@@ -8,4 +8,6 @@ outreach.log
 contacts_reference.csv
 .DS_Store
 *.xlsx
+*.docx
 custom_note.csv
+scripts/*.log

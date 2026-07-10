@@ -17,8 +17,18 @@ One command runs the whole pipeline for a slice of contacts:
    stored in `contacts.db` (SQLite) keyed by a hash of
    (Name, Company Name, LinkedIn URL) -- so reloading the same spreadsheet
    never re-processes a contact that's already been touched.
+
+   Optionally also loads a supplementary `.docx` contact list (a
+   Name/Email/Title/Company table) via `--docx PATH` (default: the file
+   named in `DEFAULT_DOCX` in `outreach.py`, if present). Unlike the xlsx
+   source, these rows already carry a real email, so step 2 is skipped for
+   them and that email is verified directly. They default to tier 4 (no
+   location data) and get no focus-area sentence (no niche data). Any
+   domain that's actually a social-platform URL (see `NON_COMPANY_DOMAINS`
+   in `loader.py`) is treated as unusable, same as the xlsx source.
 2. **Guess candidate emails** -- `first.last@domain`, `first@domain`,
-   `f.last@domain`, `firstlast@domain`, in that order.
+   `f.last@domain`, `firstlast@domain`, in that order. (Skipped for contacts
+   from a source that already supplies a real email, e.g. the docx list.)
 3. **Verify** -- tries each candidate against Abstract API's Email
    Reputation service, stops at the first result where deliverability is
    `deliverable`, SMTP/MX validation passes, the address isn't disposable,
@@ -125,9 +135,53 @@ python outreach.py --skip-agencies        # exclude Staffing & Recruiting rows
 python outreach.py --tier 2 --live --cap 20   # smaller batch for tier 2
 ```
 
-Other flags: `--xlsx PATH`, `--db PATH`, `--custom-notes PATH`,
-`--drafts-dir PATH`, `--log-file PATH`, `--reference-csv PATH` -- all default
-to sensible names in the project directory.
+Other flags: `--xlsx PATH`, `--docx PATH` (pass `--docx ''` to skip that
+source), `--db PATH`, `--custom-notes PATH`, `--drafts-dir PATH`,
+`--log-file PATH`, `--reference-csv PATH` -- all default to sensible names
+in the project directory.
+
+## Daily auto-draft (macOS LaunchAgent)
+
+A scheduled job runs `outreach.py --dry-run --cap 40` once a day on its own
+(currently 11:00 AM), across all sources and tiers by priority. It **never
+sends** -- it only verifies and drafts, then pops a macOS notification with
+the count. You still run one manual command to actually send:
+
+```bash
+python outreach.py --live --cap 40
+```
+
+Files involved:
+- `scripts/daily_draft.sh` -- the script the job runs (edit `DAILY_CAP` here
+  to change the daily draft count)
+- `~/Library/LaunchAgents/com.namanchachan.outreach-dailydraft.plist` -- the
+  LaunchAgent definition (edit `StartCalendarInterval` to change the time)
+- `scripts/daily_draft.log` -- full output of every daily run
+- `scripts/launchd.out.log` / `scripts/launchd.err.log` -- launchd-level
+  stdout/stderr (should normally be empty)
+
+**Note:** the project must live outside `~/Desktop`, `~/Documents`, or
+`~/Downloads` for launchd to be able to read it in the background -- macOS
+blocks background processes from those folders unless you separately grant
+Full Disk Access. That's why this lives in `~/Projects/Outreach`.
+
+Useful commands:
+```bash
+launchctl list | grep outreach-dailydraft      # check it's loaded
+launchctl unload ~/Library/LaunchAgents/com.namanchachan.outreach-dailydraft.plist   # pause it
+launchctl load ~/Library/LaunchAgents/com.namanchachan.outreach-dailydraft.plist     # resume it
+```
+
+To remove it entirely: unload it (above), then delete the `.plist` file.
+
+Since the daily job only picks up contacts with `status='ready' AND
+send_status != 'sent'`, if you let unsent drafts pile up beyond the daily
+cap, the job will keep re-drafting that same backlog rather than reaching
+new contacts -- send what's ready reasonably often to keep it moving.
+
+Verification credits are also the real bottleneck here, not the schedule:
+once the monthly Abstract API quota (100 free/month) is used up, the daily
+job will draft 0 new contacts until it resets, no matter the cap.
 
 ## custom_note.csv
 

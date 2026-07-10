@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     location TEXT,
     company_niche TEXT,
     source_status TEXT,
+    source TEXT NOT NULL DEFAULT 'xlsx',
 
     tier INTEGER,
     agency INTEGER NOT NULL DEFAULT 0,
@@ -87,6 +88,7 @@ class Contact:
     location: str
     company_niche: str
     source_status: str
+    source: str
     tier: int
     agency: bool
     applied_original: bool
@@ -118,6 +120,10 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        try:
+            self.conn.execute("ALTER TABLE contacts ADD COLUMN source TEXT NOT NULL DEFAULT 'xlsx'")
+        except sqlite3.OperationalError:
+            pass  # already migrated
         self.conn.commit()
 
     def close(self) -> None:
@@ -146,8 +152,15 @@ class Database:
 
         Returns True if a new row was inserted, False if it already existed
         (in which case nothing is touched -- idempotent reload).
+
+        `fields` may optionally include `source` (defaults to 'xlsx') and a
+        pre-known `candidate_emails` list (e.g. for sources that already
+        supply a real email rather than needing name+domain guessing).
         """
         ts = now_iso()
+        source = fields.get("source", "xlsx")
+        candidate_emails = fields.get("candidate_emails")
+        candidate_emails_json = json.dumps(candidate_emails) if candidate_emails else None
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -155,17 +168,23 @@ class Database:
                     row_key, name, job_title, linkedin_url, company_name,
                     company_website, company_domain, company_linkedin,
                     company_social, company_twitter, location, company_niche,
-                    source_status, tier, agency, applied_original, status,
-                    created_at, updated_at
+                    source_status, source, tier, agency, applied_original, status,
+                    candidate_emails, created_at, updated_at
                 ) VALUES (
                     :row_key, :name, :job_title, :linkedin_url, :company_name,
                     :company_website, :company_domain, :company_linkedin,
                     :company_social, :company_twitter, :location, :company_niche,
-                    :source_status, :tier, :agency, :applied_original, :status,
-                    :created_at, :updated_at
+                    :source_status, :source, :tier, :agency, :applied_original, :status,
+                    :candidate_emails, :created_at, :updated_at
                 )
                 """,
-                {**fields, "created_at": ts, "updated_at": ts},
+                {
+                    **fields,
+                    "source": source,
+                    "candidate_emails": candidate_emails_json,
+                    "created_at": ts,
+                    "updated_at": ts,
+                },
             )
             return cur.rowcount > 0
 
@@ -295,12 +314,12 @@ class Database:
 
         with self.cursor() as cur:
             cur.execute(
-                "SELECT id, name, company_name, tier, company_niche, location, agency, status "
+                "SELECT id, name, company_name, tier, company_niche, location, agency, status, source "
                 "FROM contacts ORDER BY tier ASC, id ASC"
             )
             rows = cur.fetchall()
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["contact_id", "name", "company_name", "tier", "company_niche", "location", "agency", "status"])
+            writer.writerow(["contact_id", "name", "company_name", "tier", "company_niche", "location", "agency", "status", "source"])
             for r in rows:
                 writer.writerow(list(r))

@@ -31,6 +31,7 @@ import verify
 from db import Contact, Database
 
 DEFAULT_XLSX = "Excell data.xlsx"
+DEFAULT_DOCX = "946911983-Companywise-HR-Email-IDs.docx"
 DEFAULT_DB = "contacts.db"
 DEFAULT_CUSTOM_NOTES = "custom_note.csv"
 DEFAULT_DRAFTS_DIR = "drafts"
@@ -72,6 +73,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--status", action="store_true", default=False,
                     help="Print a summary of the pipeline state and exit.")
     p.add_argument("--xlsx", default=DEFAULT_XLSX, help="Path to the source .xlsx file.")
+    p.add_argument("--docx", default=DEFAULT_DOCX,
+                    help="Path to an optional supplementary .docx contact list "
+                         "(Name/Email/Title/Company table). Pass '' to skip.")
     p.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file.")
     p.add_argument("--custom-notes", default=DEFAULT_CUSTOM_NOTES,
                     help="Path to custom_note.csv (contact_id,note) overrides.")
@@ -96,13 +100,27 @@ def run_guess_and_verify(db: Database, logger: logging.Logger, tier, skip_agenci
 
     quota_exhausted = False
     for contact in pending:
+        if contact.source == "docx" and contact.candidate_emails:
+            # Docx list carries hand-collected, already-correct emails --
+            # trust them directly, no Abstract API call needed. Processed
+            # unconditionally so an exhausted quota on xlsx contacts never
+            # blocks these.
+            db.set_verify_result(contact.id, contact.candidate_emails[0], "source_provided", "ready")
+            logger.info("contact_id=%d verify_status=source_provided verified_email=True (docx, no API call)", contact.id)
+            continue
+
         if quota_exhausted:
             # Leave status='new' so these are retried on the next run once the
             # key/quota issue is fixed, rather than being stuck permanently.
-            break
+            continue
 
-        candidates = emailgen.generate_candidates(contact.name, contact.company_domain)
-        db.set_candidate_emails(contact.id, candidates)
+        if contact.candidate_emails:
+            # Source already supplied a known real email -- verify that
+            # directly instead of pattern-guessing.
+            candidates = contact.candidate_emails
+        else:
+            candidates = emailgen.generate_candidates(contact.name, contact.company_domain)
+            db.set_candidate_emails(contact.id, candidates)
 
         if not candidates:
             logger.info("No domain/candidates for contact_id=%d (%s) -> needs_manual_check", contact.id, contact.company_name)
@@ -226,12 +244,21 @@ def main() -> None:
             logger.error("Load failed: %s", exc)
             sys.exit(1)
 
+        docx_summary = {"inserted": 0, "already_known": 0}
+        if args.docx:
+            try:
+                docx_summary = loader.load_docx_contacts(args.docx, db)
+            except loader.XlsxLoadError as exc:
+                print(f"WARNING: skipping docx source: {exc}", file=sys.stderr)
+                logger.warning("Docx load skipped: %s", exc)
+
         db.export_reference_csv(args.reference_csv)
 
         if args.status:
             print(
                 f"(Loaded {load_summary['inserted']} new contact(s) from xlsx this run; "
-                f"{load_summary['already_known']} already known.)\n"
+                f"{load_summary['already_known']} already known. "
+                f"Docx source: {docx_summary['inserted']} new, {docx_summary['already_known']} already known.)\n"
             )
             print_status(db)
             return

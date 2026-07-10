@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from zipfile import BadZipFile
 
 import pandas as pd
+from docx import Document
 
 from db import Database, row_key
 
@@ -194,4 +195,103 @@ def load_and_prioritize(xlsx_path: str, db: Database) -> dict[str, int]:
         "skipped_applied": skipped_applied,
         "already_known": already_known,
         "total_rows": len(df),
+    }
+
+
+def load_docx_contacts(docx_path: str, db: Database) -> dict[str, int]:
+    """Load a (Name, Email, Title, Company) table from a .docx into SQLite.
+
+    Unlike the xlsx source, rows here already carry a real email address
+    rather than needing name+domain pattern-guessing -- that known email is
+    stored as the sole candidate so the verify step checks it directly
+    instead of generating and testing guessed patterns.
+
+    No Location/Company Niche data is available from this source, so rows
+    default to tier 4 and get no focus-area sentence (dropped, same as any
+    unmapped niche). Idempotent via the same row_key dedup as the xlsx loader.
+    """
+    try:
+        document = Document(docx_path)
+    except Exception as exc:  # noqa: BLE001
+        raise XlsxLoadError(f"Could not read '{docx_path}': {exc}") from exc
+
+    if not document.tables:
+        raise XlsxLoadError(f"'{docx_path}' has no table to read contacts from.")
+
+    table = document.tables[0]
+    rows = [[c.text.strip() for c in r.cells] for r in table.rows]
+    if not rows:
+        raise XlsxLoadError(f"'{docx_path}' table is empty.")
+
+    header = [h.strip().lower() for h in rows[0]]
+    required = {"name", "email", "title", "company"}
+    if not required.issubset(header):
+        raise XlsxLoadError(
+            f"'{docx_path}' table is missing expected column(s). "
+            f"Found: {rows[0]}, need: {sorted(required)}"
+        )
+    idx = {col: header.index(col) for col in required}
+
+    inserted = 0
+    skipped_invalid = 0
+    already_known = 0
+
+    for r in rows[1:]:
+        name = r[idx["name"]].strip()
+        email = r[idx["email"]].strip()
+        title = r[idx["title"]].strip()
+        company_name = r[idx["company"]].strip()
+
+        if not name or not company_name or "@" not in email:
+            skipped_invalid += 1
+            continue
+
+        domain = email.split("@")[-1].strip().lower()
+        key = row_key(name, company_name, email)
+
+        fields = {
+            "row_key": key,
+            "name": name,
+            "job_title": title,
+            "linkedin_url": "",
+            "company_name": company_name,
+            "company_website": "",
+            "company_domain": domain if domain in NON_COMPANY_DOMAINS else (domain or None),
+            "company_linkedin": "",
+            "company_social": "",
+            "company_twitter": "",
+            "location": "",
+            "company_niche": "",
+            "source_status": "",
+            "source": "docx",
+            "tier": 4,
+            "agency": 0,
+            "applied_original": 0,
+            "status": "new",
+            "candidate_emails": [email],
+        }
+        # Same social-platform-domain guard as the xlsx path -- a bogus
+        # "email" whose domain is a social platform isn't a real company
+        # mailbox either.
+        if domain in NON_COMPANY_DOMAINS:
+            fields["company_domain"] = None
+            fields["candidate_emails"] = None
+
+        was_new = db.insert_contact_if_new(fields)
+        if was_new:
+            inserted += 1
+        else:
+            already_known += 1
+
+    logger.info(
+        "Docx load complete: %d new contacts inserted, %d invalid rows skipped, %d already known",
+        inserted,
+        skipped_invalid,
+        already_known,
+    )
+    return {
+        "inserted": inserted,
+        "skipped_invalid": skipped_invalid,
+        "already_known": already_known,
+        "total_rows": len(rows) - 1,
     }
