@@ -254,7 +254,11 @@ class Database:
             params.append(tier)
         if skip_agencies:
             query += " AND agency = 0"
-        query += " ORDER BY tier ASC, id ASC LIMIT ?"
+        # Randomized within tier (not alphabetical/insertion order) so a
+        # --cap batch isn't always the same slice of the list -- tier
+        # priority is still respected, sent contacts are still never
+        # re-picked (send_status != 'sent' above), so nothing repeats.
+        query += " ORDER BY tier ASC, RANDOM() LIMIT ?"
         params.append(limit)
         with self.cursor() as cur:
             cur.execute(query, params)

@@ -159,6 +159,15 @@ def run_personalize_and_send(
     counts = {"drafted": 0, "sent": 0, "failed": 0}
     smtp_ctx: sender.GmailSender | None = None
 
+    def _reconnect() -> None:
+        nonlocal smtp_ctx
+        if smtp_ctx is not None:
+            try:
+                smtp_ctx.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+        smtp_ctx = sender.GmailSender(gmail_address, gmail_password).__enter__()
+
     def _process(contact: Contact) -> None:
         note = custom_notes.get(contact.id)
         subject, body, _ = templates.render_email(
@@ -185,18 +194,41 @@ def run_personalize_and_send(
             db.set_send_result(contact.id, "sent", "sent", None, sent=True)
             counts["sent"] += 1
             logger.info("Sent: contact_id=%d recipient=%s subject=%r result=ok", contact.id, to_email, subject)
+            return
         except Exception as exc:  # noqa: BLE001
-            db.set_send_result(contact.id, "not_sent", "failed", None, sent=False)
+            logger.warning(
+                "Send failed for contact_id=%d (%s) -- reconnecting and retrying once", contact.id, exc
+            )
+
+        # One dropped connection shouldn't sink the rest of the batch --
+        # reconnect fresh and retry this contact exactly once.
+        try:
+            _reconnect()
+            smtp_ctx.send(to_email, subject, body)  # type: ignore[union-attr]
+            db.set_send_result(contact.id, "sent", "sent", None, sent=True)
+            counts["sent"] += 1
+            logger.info("Sent: contact_id=%d recipient=%s subject=%r result=ok (after reconnect)", contact.id, to_email, subject)
+        except Exception as exc:  # noqa: BLE001
+            # status stays 'ready' (not a terminal 'failed') -- this contact's
+            # email was never actually rejected, just a transient send error,
+            # so the next run picks it up again instead of losing it.
+            db.set_send_result(contact.id, "send_error", "ready", None, sent=False)
             counts["failed"] += 1
-            logger.error("Send failed: contact_id=%d recipient=%s error=%s", contact.id, to_email, exc)
+            logger.error("Send failed after reconnect: contact_id=%d recipient=%s error=%s", contact.id, to_email, exc)
 
     if live:
-        with sender.GmailSender(gmail_address, gmail_password) as opened:
-            smtp_ctx = opened
+        _reconnect()
+        try:
             for i, contact in enumerate(ready):
                 _process(contact)
                 if i < len(ready) - 1:
                     sender.sleep_between_sends()
+        finally:
+            if smtp_ctx is not None:
+                try:
+                    smtp_ctx.__exit__(None, None, None)
+                except Exception:  # noqa: BLE001
+                    pass
     else:
         for contact in ready:
             _process(contact)
