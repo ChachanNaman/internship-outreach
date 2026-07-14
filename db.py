@@ -112,7 +112,6 @@ class Contact:
         d["candidate_emails"] = json.loads(d["candidate_emails"]) if d["candidate_emails"] else []
         return cls(**d)
 
-
 class Database:
     def __init__(self, path: str):
         self.path = path
@@ -134,7 +133,7 @@ class Database:
 
     def __exit__(self, *exc) -> None:
         self.close()
-
+###
     @contextmanager
     def cursor(self) -> Iterator[sqlite3.Cursor]:
         cur = self.conn.cursor()

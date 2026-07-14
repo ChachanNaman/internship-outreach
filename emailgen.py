@@ -19,7 +19,7 @@ def name_parts(full_name: str) -> tuple[str, str]:
     last = _clean(tokens[-1]) if len(tokens) > 1 else ""
     return first, last
 
-
+##
 def generate_candidates(full_name: str, domain: Optional[str]) -> list[str]:
     """Build candidate emails in priority order:
 
